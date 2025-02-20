@@ -22,6 +22,8 @@ options(repos = c(
     inbo = 'https://inbo.r-universe.dev',
     CRAN = 'https://cloud.r-project.org'))
 library(dplyr)
+library(ggplot2)
+library(scales)
 ```
 
 # data inlezen
@@ -31,7 +33,7 @@ data_beken$FieldSamplingDate <- as.Date(data_beken$FieldSamplingDate)
 
 ```
 
-# Voeg RESULTCALC toe
+## Voeg RESULTCALC toe
 ```{r}
 # voeg ResultCalc toe als kolom voor meetwaarden onder detectielimiet
 data_beken$ResultCalc <- ifelse(
@@ -41,7 +43,7 @@ data_beken$ResultCalc <- ifelse(
 )
 ```
 
-# Bereken NH4_N, NO3_N en NO2_N van NH4, NO3, NO2, alsook anorganische stikstof (som)
+## Bereken NH4_N, NO3_N en NO2_N van NH4, NO3, NO2, alsook anorganische stikstof (som)
 ```{r}
 calculate_n_values <- function(df) {
   df %>%
@@ -65,34 +67,19 @@ calculate_n_values <- function(df) {
 # Calculate _N values
 df_with_n <- calculate_n_values(data_beken)
 
-# Calculate N_anorg
-n_anorg <- df_with_n %>%
-  filter(Component_N %in% c("NH4_N", "NO3_N", "NO2_N")) %>%
-  group_by(CODE, FieldSamplingDate) %>%
-  summarise(
-    ResultCalc = sum(ResultCalc_N, na.rm = TRUE),
-    Component = "N_anorg",
-    Unit = "mg N/l",
-    .groups = "drop"
-  )
-
-# Add other columns to n_anorg
-n_anorg <- df_with_n %>%
-  group_by(CODE, FieldSamplingDate) %>%
-  slice(1) %>%
-  select(-Component, -ResultCalc, -Unit) %>%
-  right_join(n_anorg, by = c("CODE", "FieldSamplingDate"))
-
-# Prepare the new _N rows
+# Create new rows for NH4_N, NO3_N, and NO2_N
 new_n_rows <- df_with_n %>%
   filter(Component %in% c("NH4", "NO3", "NO2")) %>%
-  select(-ResultCalc, -Component, -Unit) %>%
-  rename(ResultCalc = ResultCalc_N, Component = Component_N, Unit = Unit_N)
+  mutate(
+    ResultCalc = ResultCalc_N,
+    Component = Component_N,
+    Unit = Unit_N
+  ) %>%
+  select(-ResultCalc_N, -Component_N, -Unit_N)
 
-# Combine all data frames using bind_rows
+# Combine original data with new N rows
 final_df <- bind_rows(
-  df_with_n %>% select(-ResultCalc_N, -Component_N, -Unit_N),
-  n_anorg,
+  data_beken,
   new_n_rows
 )
 
@@ -103,10 +90,134 @@ final_df <- final_df %>%
 # Reset row names
 rownames(final_df) <- NULL
 
-# verwijder dubbele rijen
+# Remove duplicate rows (if any)
 data_beken <- final_df %>% 
-  unique()
+  distinct()
+
+```
+
+# Voeg organische en anorganische data toe
+```{r}
+# Bereken Anorganische stikstof
+n_anorg <- data_beken %>%
+  filter(Component %in% c("NO3_N", "NO2_N", "NH4_N")) %>%
+  group_by(CODE, FieldSamplingDate) %>%
+  summarise(
+    ResultCalc = if(n_distinct(Component) == 3) sum(ResultCalc, na.rm = TRUE) else NA_real_,
+    Component = "N_anorg",
+    Unit = "mg N/l",
+    .groups = "drop"
+  )
+
+# Calculate N_org
+n_org <- data_beken %>%
+  filter(Component %in% c("T.N", "NO3_N", "NO2_N", "NH4_N")) %>%
+  group_by(CODE, FieldSamplingDate) %>%
+  summarise(
+    ResultCalc = if(n_distinct(Component) == 4) 
+                   ResultCalc[Component == "T.N"] - sum(ResultCalc[Component %in% c("NO3_N", "NO2_N", "NH4_N")], na.rm = TRUE)
+                 else 
+                   NA_real_,
+    Component = "N_org",
+    Unit = "mg N/l",
+    .groups = "drop"
+  )
+
+# Add other columns to n_anorg and n_org
+add_other_columns <- function(df) {
+  data_beken %>%
+    group_by(CODE, FieldSamplingDate) %>%
+    slice(1) %>%
+    select(-Component, -ResultCalc, -Unit) %>%
+    right_join(df, by = c("CODE", "FieldSamplingDate"))
+}
+
+n_anorg <- add_other_columns(n_anorg)
+n_org <- add_other_columns(n_org)
+
+# Combine all data
+final_df <- bind_rows(
+  data_beken,
+  n_anorg,
+  n_org
+)
+
+# Sort the dataframe
+final_df <- final_df %>%
+  arrange(CODE, FieldSamplingDate, Component)
+
+# Remove duplicate rows (if any)
+data_beken <- final_df %>% 
+  distinct()
+
+```
+
+## Wanneer T.N gemeten?
+```{r}
+# meetpunten TN
+data_beken %>% filter(Component == "T.N") %>% 
+  ggplot(aes(x = FieldSamplingDate, y = CODE)) +
+  geom_point(size = 2) +
+    scale_x_date(date_breaks = "1 year", date_labels = "%Y")
+
+# vergelijk met NO3 - veel meer gemeten
+data_beken %>% filter(Component == "NO3") %>% 
+  ggplot(aes(x = FieldSamplingDate, y = CODE)) +
+  geom_point(size = 2) +
+    scale_x_date(date_breaks = "1 year", date_labels = "%Y")
+
+    
 ```
 
 
+
+# Boxplots functie
+```{r}
+create_boxplot <- function(dataset, Component, vline = NULL, xlab = "ResultCalc", save_path = NULL) {
+  # Filter the dataset for the specified Component
+  filtered_data <- dataset %>% 
+    filter(Component == !!Component)
+  
+  # Calculate median values and order CODEs
+  code_order <- filtered_data %>%
+    group_by(CODE) %>%
+    summarise(max_value = max(ResultCalc, na.rm = TRUE)) %>%
+    arrange(max_value) %>%
+    pull(CODE)
+  
+  # Convert CODE to a factor with levels ordered by median ResultCalc
+  filtered_data$CODE <- factor(filtered_data$CODE, levels = code_order)
+  
+  # Create the base plot
+  p <- ggplot(filtered_data, aes(x = ResultCalc, y = CODE)) +
+    geom_boxplot() +
+    labs(x = xlab, y = "CODE", title = NULL) +
+    scale_x_continuous(breaks = pretty_breaks(n = 10))
+  
+  # Add vertical line if vline is specified
+  if (!is.null(vline)) {
+    p <- p + geom_vline(xintercept = vline, color = "red", linetype = "dashed", size = 1)
+  }
+  
+  # Save the plot if save_path is provided
+  if (!is.null(save_path)) {
+    ggsave(save_path, plot = p, width = 8, height = 10, dpi = 300)
+    cat("Plot saved to:", save_path, "\n")
+  }
+  
+  return(p)
+}
+
+```
+
+
+## Boxplots
+```{r}
+# chloride
+
+create_boxplot(data_beken, "Cl", , "Chloride-concentratie (mg/l)", save_path = "./exports/boxplots/Chloride MKN.jpg")
+
+create_boxplot(data_beken, "EC25.VELD", , "Elektrische geleidbaarheid", save_path = "./exports/boxplots/Elektrische geleidbaarheid MKN.jpg")
+
+```
 
