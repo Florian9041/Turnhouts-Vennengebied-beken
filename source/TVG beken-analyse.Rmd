@@ -24,6 +24,7 @@ options(repos = c(
 library(dplyr)
 library(ggplot2)
 library(scales)
+library(tidyr)
 ```
 
 # data inlezen
@@ -173,7 +174,7 @@ data_beken %>% filter(Component == "NO3") %>%
 
 # Boxplots functie
 ```{r}
-create_boxplot <- function(dataset, Component, vline = NULL, xlab = "ResultCalc", save_path = NULL) {
+create_boxplot <- function(dataset, Component, xlab = "ResultCalc",vline = NULL,  save_path = NULL) {
   # Filter the dataset for the specified Component
   filtered_data <- dataset %>% 
     filter(Component == !!Component)
@@ -210,14 +211,82 @@ create_boxplot <- function(dataset, Component, vline = NULL, xlab = "ResultCalc"
 
 ```
 
+# boxplots SD
+```{r}
+filtered_data <- data_beken %>%
+  group_by(CODE, FieldSamplingDate) %>%
+  filter(all(c("WD.VELD", "SD.VELD") %in% Component) & 
+         all(!is.na(ResultCalc[Component %in% c("WD.VELD", "SD.VELD")]))) %>%
+  ungroup()
+
+# Calculate max values for SD.VELD and WD.VELD, and determine fill color
+code_data <- filtered_data %>%
+  group_by(CODE, Component) %>%
+  summarise(max_value = max(ResultCalc, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = Component, values_from = max_value) %>%
+  mutate(fill_color = ifelse(SD.VELD == WD.VELD, "lightblue", "white"))
+
+# Order CODEs based on max value of SD.VELD
+code_order <- code_data %>%
+  arrange(SD.VELD) %>%
+  pull(CODE)
+
+# Filter data for just SD.VELD and join with fill color info
+plot_data <- filtered_data %>%
+  filter(Component == "SD.VELD") %>%
+  left_join(select(code_data, CODE, fill_color), by = "CODE")
+
+# Convert CODE to a factor with levels ordered by max ResultCalc
+plot_data$CODE <- factor(plot_data$CODE, levels = code_order)
+
+# Create the plot
+p <- ggplot(plot_data, aes(x = ResultCalc, y = CODE, fill = fill_color)) +
+  geom_boxplot() +
+  scale_fill_identity() +
+  labs(x = "SD.VELD (m)", y = "CODE", title = NULL) +
+  scale_x_continuous(breaks = pretty_breaks(n = 10))
+
+# Display the plot
+print(p)
+
+# Save the plot (optional)
+# ggsave("SD_VELD_boxplot.png", plot = p, width = 8, height = 10, dpi = 300)
+ggsave("./exports/boxplots/Secchi diepte.jpg", plot = p, width = 8, height = 10, dpi = 300)
+    
+```
+
 
 ## Boxplots
 ```{r}
-# chloride
+create_boxplot(data_beken, "Cl", "Chloride-concentratie (mg/l)", save_path = "./exports/boxplots/Chloride MKN.jpg")
 
-create_boxplot(data_beken, "Cl", , "Chloride-concentratie (mg/l)", save_path = "./exports/boxplots/Chloride MKN.jpg")
+create_boxplot(data_beken, "EC25.VELD",  "Elektrische geleidbaarheid", save_path = "./exports/boxplots/Elektrische geleidbaarheid MKN.jpg")
 
-create_boxplot(data_beken, "EC25.VELD", , "Elektrische geleidbaarheid", save_path = "./exports/boxplots/Elektrische geleidbaarheid MKN.jpg")
+create_boxplot(data_beken, "TEMP.VELD", "Temperatuur", save_path = "./exports/boxplots/Temperatuur MKN.jpg")
+
+create_boxplot(data_beken, "WD.VELD", "Waterdiepte (m)", save_path = "./exports/boxplots/Waterdiepte.jpg")
+
+create_boxplot(data_beken, "SAT.VELD", "Zuurstofverzadiging (%)", save_path = "./exports/boxplots/Zuurstofverzadiging.jpg")
+
+create_boxplot(data_beken, "O2.VELD", "Zuurstofconcentratie (mg/l)", save_path = "./exports/boxplots/Zuurstofconcentratie.jpg")
+
+create_boxplot(data_beken, "pH.VELD", "Zuurtegraad- pH", save_path = "./exports/boxplots/Zuurtegraad.jpg")
+
+create_boxplot(data_beken, "SO4", "Sulfaat-concentratie", save_path = "./exports/boxplots/Sulfaat.jpg")
+
+create_boxplot(data_beken, "NPOC", "Organische koolstof - NPOC (mg/l)", save_path = "./exports/boxplots/NPOC.jpg")
+
+create_boxplot(data_beken, "T.N", "Totale stikstof - TN (mg N/l)", save_path = "./exports/boxplots/Totale stikstof.jpg")
+
+create_boxplot(data_beken, "T.P", "Totale fosfor - TP (mg P/l)", save_path = "./exports/boxplots/Totale fosfor.jpg")
+
+create_boxplot(data_beken, "NH4_N", "Ammonium-stikstof - NH4_N (mg N/l)", save_path = "./exports/boxplots/Ammonium-stikstof NH4_N.jpg")
+
+create_boxplot(data_beken, "NO3_N", "Nitraat-stikstof - NO3_N (mg N/l)", save_path = "./exports/boxplots/Nitraat-stikstof NO3_N.jpg")
+
+create_boxplot(data_beken, "NO2_N", "Nitriet-stikstof - NO2_N (mg N/l)", save_path = "./exports/boxplots/Nitriet-stikstof NO2_N.jpg")
+
+create_boxplot(data_beken, "PO4", "Fosfaat - PO4 (mg/l)", save_path = "./exports/boxplots/Fosfaat PO4.jpg")
 
 ```
 
