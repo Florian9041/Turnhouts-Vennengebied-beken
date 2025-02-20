@@ -5,7 +5,108 @@ date: "2025-02-20"
 output: html_document
 ---
 
+```{r setup, results ='hide', eval = TRUE, echo = FALSE, message = FALSE, cache = FALSE, purl = FALSE, warning = FALSE}
+library(knitr)
+opts_chunk$set(
+  echo = FALSE, 
+  eval = TRUE,  
+  cache = FALSE, 
+  autodep = TRUE,
+  dpi = 300,
+  warning = TRUE,
+  error = TRUE,
+  message = TRUE
+)
+# Enable inbo r-universe
+options(repos = c(
+    inbo = 'https://inbo.r-universe.dev',
+    CRAN = 'https://cloud.r-project.org'))
+library(dplyr)
+```
+
+# data inlezen
 ```{r}
+data_beken <- read.csv(file = "./data/FactResultAqua_TVG_beken_2025-02-19.csv", sep = ";")
+data_beken$FieldSamplingDate <- as.Date(data_beken$FieldSamplingDate)
 
 ```
+
+# Voeg RESULTCALC toe
+```{r}
+# voeg ResultCalc toe als kolom voor meetwaarden onder detectielimiet
+data_beken$ResultCalc <- ifelse(
+  grepl("<|>", data_beken$ResultFormatted),
+  as.numeric(gsub(",", ".", data_beken$ResultFormattedNumeric)) / 2,
+  as.numeric(gsub(",", ".", data_beken$ResultFormattedNumeric))
+)
+```
+
+# Bereken NH4_N, NO3_N en NO2_N van NH4, NO3, NO2, alsook anorganische stikstof (som)
+```{r}
+calculate_n_values <- function(df) {
+  df %>%
+    mutate(
+      ResultCalc_N = case_when(
+        Component == "NH4" ~ ResultCalc / 1.2880,
+        Component == "NO3" ~ ResultCalc / 4.4268,
+        Component == "NO2" ~ ResultCalc / 3.2845,
+        TRUE ~ ResultCalc
+      ),
+      Component_N = case_when(
+        Component == "NH4" ~ "NH4_N",
+        Component == "NO3" ~ "NO3_N",
+        Component == "NO2" ~ "NO2_N",
+        TRUE ~ Component
+      ),
+      Unit_N = if_else(Component %in% c("NH4", "NO3", "NO2"), "mg N/l", Unit)
+    )
+}
+
+# Calculate _N values
+df_with_n <- calculate_n_values(data_beken)
+
+# Calculate N_anorg
+n_anorg <- df_with_n %>%
+  filter(Component_N %in% c("NH4_N", "NO3_N", "NO2_N")) %>%
+  group_by(CODE, FieldSamplingDate) %>%
+  summarise(
+    ResultCalc = sum(ResultCalc_N, na.rm = TRUE),
+    Component = "N_anorg",
+    Unit = "mg N/l",
+    .groups = "drop"
+  )
+
+# Add other columns to n_anorg
+n_anorg <- df_with_n %>%
+  group_by(CODE, FieldSamplingDate) %>%
+  slice(1) %>%
+  select(-Component, -ResultCalc, -Unit) %>%
+  right_join(n_anorg, by = c("CODE", "FieldSamplingDate"))
+
+# Prepare the new _N rows
+new_n_rows <- df_with_n %>%
+  filter(Component %in% c("NH4", "NO3", "NO2")) %>%
+  select(-ResultCalc, -Component, -Unit) %>%
+  rename(ResultCalc = ResultCalc_N, Component = Component_N, Unit = Unit_N)
+
+# Combine all data frames using bind_rows
+final_df <- bind_rows(
+  df_with_n %>% select(-ResultCalc_N, -Component_N, -Unit_N),
+  n_anorg,
+  new_n_rows
+)
+
+# Sort the dataframe
+final_df <- final_df %>%
+  arrange(CODE, FieldSamplingDate, Component)
+
+# Reset row names
+rownames(final_df) <- NULL
+
+# verwijder dubbele rijen
+data_beken <- final_df %>% 
+  unique()
+```
+
+
 
