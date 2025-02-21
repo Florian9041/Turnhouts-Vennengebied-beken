@@ -44,7 +44,7 @@ data_beken$ResultCalc <- ifelse(
 )
 ```
 
-## Bereken NH4_N, NO3_N en NO2_N van NH4, NO3, NO2, alsook anorganische stikstof (som)
+## Bereken NH4_N, NO3_N en NO2_N van NH4, NO3, NO2 alsook PO4_P (Orthofosfaat) van PO4
 ```{r}
 calculate_n_values <- function(df) {
   df %>%
@@ -53,15 +53,22 @@ calculate_n_values <- function(df) {
         Component == "NH4" ~ ResultCalc / 1.2880,
         Component == "NO3" ~ ResultCalc / 4.4268,
         Component == "NO2" ~ ResultCalc / 3.2845,
+        Component == "PO4" ~ ResultCalc / 3.066,
         TRUE ~ ResultCalc
       ),
       Component_N = case_when(
         Component == "NH4" ~ "NH4_N",
         Component == "NO3" ~ "NO3_N",
         Component == "NO2" ~ "NO2_N",
+        Component == "PO4" ~ "PO4_P",
         TRUE ~ Component
       ),
-      Unit_N = if_else(Component %in% c("NH4", "NO3", "NO2"), "mg N/l", Unit)
+      Unit_N = if_else(Component %in% c("NH4", "NO3", "NO2"), 
+                       "mg N/l", 
+                       if_else(
+                         Component %in% "PO4", 
+                         "mg P/l", 
+                         Unit))
     )
 }
 
@@ -70,7 +77,7 @@ df_with_n <- calculate_n_values(data_beken)
 
 # Create new rows for NH4_N, NO3_N, and NO2_N
 new_n_rows <- df_with_n %>%
-  filter(Component %in% c("NH4", "NO3", "NO2")) %>%
+  filter(Component %in% c("NH4", "NO3", "NO2", "PO4")) %>%
   mutate(
     ResultCalc = ResultCalc_N,
     Component = Component_N,
@@ -135,6 +142,7 @@ add_other_columns <- function(df) {
 
 n_anorg <- add_other_columns(n_anorg)
 n_org <- add_other_columns(n_org)
+n_org <- n_org[!is.na(n_org$ResultCalc),]
 
 # Combine all data
 final_df <- bind_rows(
@@ -288,5 +296,55 @@ create_boxplot(data_beken, "NO2_N", "Nitriet-stikstof - NO2_N (mg N/l)", save_pa
 
 create_boxplot(data_beken, "PO4", "Fosfaat - PO4 (mg/l)", save_path = "./exports/boxplots/Fosfaat PO4.jpg")
 
+create_boxplot(data_beken, "PO4_P", "Orthofosfaat - PO4_P (mg P/l)", save_path = "./exports/boxplots/Orthofosfaat PO4_P.jpg")
+
+create_boxplot(data_beken, "N_anorg", "Anorganische stikstof (mg N/l)", save_path = "./exports/boxplots/Anorganische stikstof.jpg")
+
+create_boxplot(data_beken, "N_org", "Organische stikstof (mg N/l)", save_path = "./exports/boxplots/Organische stikstof.jpg")
+
+```
+
+# Exports tabel MKN
+
+## Mediaan
+```{r}
+med_data <- data_beken %>%
+  group_by(CODE, Component) %>%
+  summarise(mediaan = median(ResultCalc, na.rm = TRUE)) %>%
+  ungroup()
+
+wide_data <- med_data %>%
+  pivot_wider(names_from = Component, values_from = mediaan)
+
+# Export to CSV
+write.csv2(wide_data, "./exports/csv's/mediaan.csv", row.names = FALSE)
+```
+
+## Minimum
+```{r}
+min_data <- data_beken %>%
+  group_by(CODE, Component) %>%
+  summarise(minimum = min(ResultCalc, na.rm = TRUE)) %>%
+  ungroup()
+
+wide_data <- min_data %>%
+  pivot_wider(names_from = Component, values_from = minimum)
+
+# Export to CSV
+write.csv2(wide_data, "./exports/csv's/minimum.csv", row.names = FALSE)
+```
+
+## Maximum
+```{r}
+max_data <- data_beken %>%
+  group_by(CODE, Component) %>%
+  summarise(maximum = max(ResultCalc, na.rm = TRUE)) %>%
+  ungroup()
+
+wide_data <- max_data %>%
+  pivot_wider(names_from = Component, values_from = maximum)
+
+# Export to CSV
+write.csv2(wide_data, "./exports/csv's/maximum.csv", row.names = FALSE)
 ```
 
